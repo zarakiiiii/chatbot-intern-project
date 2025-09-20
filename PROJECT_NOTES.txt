@@ -1,0 +1,111 @@
+System Integration Prototype - Project Notes
+
+1) Setup Guide
+- Prerequisites: Python 3.13, Windows PowerShell or cmd, internet access.
+- Create venv:
+  py -m venv .venv
+- Ensure pip is available:
+  .\.venv\Scripts\python -m ensurepip --upgrade
+  .\.venv\Scripts\python -m pip install --upgrade pip setuptools wheel
+- Install backend/dashboard deps (installed incrementally already; for reference):
+  .\.venv\Scripts\python -m pip install fastapi==0.115.0 uvicorn[standard]==0.30.6 pydantic==2.9.2 requests==2.32.3 python-multipart==0.0.9
+  .\.venv\Scripts\python -m pip install numpy==2.1.1 pandas==2.3.2 scikit-learn==1.5.2 reportlab==4.2.2 streamlit==1.38.0
+- Run backend (stable, no reload) on port 9100:
+  cmd /c .\.venv\Scripts\python -c "import uvicorn; from backend.app.main import app; uvicorn.run(app, host='127.0.0.1', port=9100, reload=False, log_level='info')"
+- Run Streamlit dashboard (port 8601):
+  cmd /c .\.venv\Scripts\python -m streamlit run dashboard\app.py --server.port 8601
+- Serve frontend (port 8080):
+  py -m http.server 8080
+- Open:
+  Backend: http://127.0.0.1:9100/docs
+  Dashboard: http://127.0.0.1:8601
+  Chat UI: http://127.0.0.1:8080/frontend/
+
+2) Architecture Overview
+- Frontend (WhatsApp-style)
+  Path: frontend/ (index.html, styles.css, script.js)
+  Purpose: Simple chat UI sending commands to backend (`/api`), shows quick responses.
+- Backend (FastAPI)
+  Path: backend/app/
+  Files:
+    - main.py: FastAPI app, CORS, router registration.
+    - routes.py: All endpoints (inventory, delivery, credit, offers/transactions, pricing, forecast, expiry/reorder, routing optimize, PDF report).
+    - models.py: Pydantic request/response models.
+    - data.py: In-memory synthetic data store: 5 stores (store_1..store_5), 3 products (rice, wheat, sugar), inventory, transactions, offers, prices.
+- Dashboard (Streamlit)
+  Path: dashboard/app.py
+  Purpose: Visual overview of offers, pricing compare, 7-day forecasts, expiry/reorder insights, route optimization preview, and PDF download.
+
+3) APIs Implemented (key routes under /api)
+- Health: GET /health (root level)
+- Inventory:
+  - POST /inventory/update {store_id, product_id, quantity_delta}
+  - GET /inventory/get?store_id=&product_id=
+  - GET /inventory/expiry_reorder?days_threshold=&service_level_days=
+- Delivery & Logistics:
+  - POST /delivery/book {order_id, store_id, address, items}
+  - GET /logistics/track?order_id=
+- Credit:
+  - POST /credit/score {retailer_id}
+- Catalog/Transactions/Pricing:
+  - GET /offers
+  - GET /transactions?store_id=&product_id=
+  - GET /pricing/compare
+  - GET /pricing/raw
+- Analytics:
+  - POST /forecast {stores[], products[], horizon_days}
+  - POST /routing/optimize {vehicle_count, depot_lat, depot_lng, stops[]}
+- Report:
+  - GET /report/pdf (ReportLab PDF)
+- Utility:
+  - GET /stores, GET /products, GET /data/reset
+
+4) Code Comments and Explanation Notes
+- Data generation (backend/app/data.py):
+  - Generates 120 days of daily demand per store-product with mild seasonality and trend.
+  - Initializes inventory with random quantities and realistic expiry dates based on product shelf life.
+  - Creates simple FMCG offers and local/online price lists.
+- Forecast method (backend/app/routes.py:/forecast):
+  - Linear regression on a time index over historical daily quantities per store-product.
+  - Produces non-negative integer forecasts for specified horizon.
+  - Fixed date arithmetic to avoid mixing Python date with pandas Timedelta; uses pandas Timestamp.
+- Expiry and Reorder logic (backend/app/routes.py:/inventory/expiry_reorder):
+  - Calculates days to expiry and a simple reorder point = avg daily sales (last 30 days) × service_level_days.
+- Route optimization (backend/app/routes.py:/routing/optimize):
+  - Attempts OR-Tools if available (optional). If unavailable, falls back to a deterministic heuristic:
+    round-robin assignment across vehicles + nearest-neighbor ordering, returning depot-indexed paths.
+- PDF (backend/app/routes.py:/report/pdf):
+  - Generates a minimal PDF listing pricing and deltas; can be extended for more insights.
+- Frontend commands (frontend/script.js):
+  - 'offers', 'pricing', 'forecast', 'expiry', 'routes' are mapped to backend endpoints.
+  - API_BASE points to http://127.0.0.1:9100/api for stable backend.
+- Dashboard robustness (dashboard/app.py):
+  - Wraps all requests in safe helper to show inline error instead of crashing.
+
+5) Summary of Insights and Decisions
+- Demand forecast:
+  - Linear regression per store-product on synthetic 120-day history; default horizon 7 or 14 days.
+  - Produces structured list with dates and forecasted quantities.
+- Expiry risks & reorder points:
+  - Highlights items nearing expiry within threshold (default 30 days).
+  - Suggests reorder points based on recent daily sales and service window.
+- Pricing comparison:
+  - Shows local vs online price and delta for rice, wheat, sugar.
+- Routing optimization:
+  - Heuristic fallback delivers usable routes without system-wide solver dependency conflicts.
+  - If OR-Tools is installed, the endpoint will switch to exact VRP engine (indicator returned in response).
+- Stability choice:
+  - Moved backend to port 9100 with reload disabled to avoid reloader-related connection drops on Windows.
+  - Dashboard and frontend updated to use the stable port; dashboard shows graceful errors if API is down.
+
+6) How to Extend
+- Replace synthetic data with real connectors (FMCG offers, retailer transactions, logistics tracking).
+- Swap linear regression for more advanced forecasting (Prophet, SARIMA, or gradient boosting).
+- Enhance PDF with charts and multi-page summaries.
+- Add authentication and role-based access control.
+- Add persistent storage (SQLite/Postgres) and background jobs for scheduled forecasts.
+
+7) Quick Troubleshooting
+- If dashboard says "Failed to fetch": ensure backend is up: http://127.0.0.1:9100/health
+- If ports are busy: change ports in startup commands and update API_BASE in frontend/script.js and dashboard/app.py
+- If imports fail: re-run pip installs listed in Setup Guide.
