@@ -2,7 +2,7 @@ import requests
 import pandas as pd
 import streamlit as st
 
-API_BASE = "http://127.0.0.1:8000/api"
+API_BASE = "https://chatbot-intern-project.onrender.com/api";
 
 st.set_page_config(page_title="Data Intelligence Dashboard", layout="wide")
 st.title("Data Intelligence Dashboard")
